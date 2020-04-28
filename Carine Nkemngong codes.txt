@@ -1,0 +1,223 @@
+Codes used to analyze 16S metagenomic data used in the study                                       
+  
+1. Logging into the cluster:
+   cnkemngo@snyder.rcac.purdue.edu
+
+2. Starting an interactive session: 
+   qsub -I -l nodes=1:ppn=2,walltime=02:00:00 -q microbiome
+
+3. Load bioinfo and qiime
+  module load bioinfo
+  module load Qiime/2-2019.10
+4. Metadata downloaded from ncbi Project # PRJEB32444 and renamed CarineMetadata.tsv
+
+5. Converting sequences into qiime recognizable material by creating a MANIFEST file and demultiplexing 
+     
+mothur "#make.file(inputdir=., type=fastq, prefix=my_project)
+ nano my_project.files and include column headings separated by a tab (heading: sample-id   forward-absolute-filepath       reverse-absolute-filepath)
+
+qiime tools import \
+--type 'SampleData[PairedEndSequencesWithQuality]' \
+--input-path my_project.files \
+--input-format PairedEndFastqManifestPhred33V2 \
+--output-path cnkemngo/qiime_out
+
+qiime tools import \
+   --type EMPPairedEndSequences \
+   --input-path cnkemngo \
+   --output-path emp-paired-end-sequences.qza
+qiime tools import \
+--type 'SampleData[PairedEndSequencesWithQuality]' \
+--input-path data/references/MANIFEST.Carine \
+--input-format PairedEndFastqManifestPhred33 \
+--output-path cnkemngo/qiime_out/
+
+qiime demux summarize \
+  --i-data data/qiime_out/demux-paired-end.qza \
+  --o-visualization cnkemngo/qiime_out/demux-paired-end.qzv
+
+NB: All of these commands were ran on Scholar and outputs later transferred to Snyder. 
+
+
+7. Denoising 
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs data/qiime_out/demux-paired-end.qza \
+  --p-trim-left-f 10 \
+  --p-trim-left-r 10\
+  --p-trunc-len-f 220 \
+  --p-trunc-len-r 220 \
+  --o-table cnkemngo/qiime_out/table.qza \
+  --o-representative-sequences cnkemngo/qiime_out/rep-seqs.qza \
+  --o-denoising-stats cnkemngo/qiime_out/denoising-stats.qza
+
+8. Generaion of summary tables (directory: /scratch/snyder/c/cnkemngo/Carine/qiime_out)
+qiime feature-table summarize \
+  --i-table table.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file CarineMetadata.tsv
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization denoising-stats.qzv
+
+9. Generation of feature tables (directory: /scratch/snyder/c/cnkemngo/Carine/qiime_out)
+qiime feature-table summarize \
+  --i-table table.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file CarineMetadata.tsv
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+
+10. Generation of a phylogenetic diversity tree (directory: /scratch/snyder/c/cnkemngo/Carine/qiime_out)
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences rep-seqs.qza \
+  --o-alignment aligned-rep-seqs.qza \
+  --o-masked-alignment masked-aligned-rep-seqs.qza \
+  --o-tree unrooted-tree.qza \
+  --o-rooted-tree rooted-tree.qza
+
+11. Alpha and Beta Diversity analysis and statistical testing (directory: /scratch/snyder/c/cnkemngo/Carine/qiime_out)
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny rooted-tree.qza \
+  --i-table table.qza \
+  --p-sampling-depth 2620 \
+  --m-metadata-file CarineMetadata.tsv \
+  --output-dir core-metrics-results
+
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/faith_pd_vector.qza \
+  --m-metadata-file ../references/stability_sample-metadata.txt \
+  --o-visualization core-metrics-results/faith-pd-group-significance.qzv
+
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/faith_pd_vector.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --o-visualization core-metrics-results/faith-pd-group-significance.qzv
+
+$ qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/evenness_vector.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --o-visualization core-metrics-results/evenness-group-significance.qzv
+
+qiime diversity alpha-correlation \
+  --i-alpha-diversity core-metrics-results/faith_pd_vector.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --o-visualization core-metrics-results/faith-pd-correlation-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --m-metadata-column location \ Line was adjusted for test for regions aswell
+  --o-visualization core-metrics-results/weighted-unifrac-location-significance.qzv \
+  --p-pairwise
+
+12. Alpha rarefraction plotting 
+qiime diversity alpha-rarefaction \
+  --i-table table.qza \
+  --i-phylogeny rooted-tree.qza \
+  --p-max-depth 5000 \
+  --m-metadata-file CarineMetadata.tsv \
+  --o-visualization alpha-rarefaction.qzv
+
+13. Training the classifier with Silva and taxonomic analysis
+
+wget https://www.arb-silva.de/fileadmin/silva_databases/qiime/Silva_132_release.zip
+$ unzip Silva_132_release.zip 
+
+qiime tools import \
+--type 'FeatureData[Taxonomy]' \
+--input-format HeaderlessTSVTaxonomyFormat \
+--input-path taxonomy_7_levels.txt \
+--output-path ref-taxonomy.qza
+
+ qiime tools import \
+--type 'FeatureData[Sequence]' \
+--input-path silva_132_99_16S.fna \
+--output-path silva_132_99_16S.qza
+
+qiime feature-classifier extract-reads \
+--i-sequences silva_132_99_16S.qza \
+--p-f-primer TCCTACGGGAGGCAGCAG \   
+--p-r-primer ATTACCGCGGCTGCTGG \  
+--p-min-length 150  \   
+--p-max-length 430 \    
+--o-reads ref-seqs.qza   
+
+qiime tools import \
+--type 'FeatureData[Sequence]' \
+--input-path silva_132_99_16S.fna \
+--output-path silva_132_99_16S.qza
+
+qiime feature-classifier fit-classifier-naive-bayes \ 
+--i-reference-reads ref-seqs.qza \ 
+--i-reference-taxonomy ref-taxonomy.qza \ 
+--o-classifier silva-classifier-v1-v3.qza
+
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-classifier-v1-v3.qza \
+  --i-reads rep-seqs.qza \
+  --o-classification taxonomy.qza
+
+qiime metadata tabulate \
+  --m-input-file taxonomy.qza \
+  --o-visualization taxonomy.qzv
+
+qiime metadata tabulate \
+  --m-input-file taxonomy.qza \
+  --o-visualization taxonomy.qzv
+
+13. Interactive taxonomic bar plots and ANCOM testing 
+ qiime taxa barplot \
+  --i-table table.qza \
+  --i-taxonomy taxonomy.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --o-visualization taxa-bar-plots.qzv
+
+qiime feature-table filter-samples \
+  --i-table table.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --p-where region \
+  --o-filtered-table region-table.qza
+
+qiime composition ancom \
+  --i-table comp-table.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --m-metadata-column region \
+  --o-visualization ancom-region.qzv
+
+qiime composition ancom \
+  --i-table comp-table.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --m-metadata-column location \
+  --o-visualization ancom-location.qzv
+
+qiime feature-table filter-samples \
+  --i-table table.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --p-where location \
+  --o-filtered-table location-table.qza
+
+Altenative codes used to troubleshot testing using ANCOM
+qiime taxa collapse \
+  --i-table table.qza \
+  --i-taxonomy taxonomy.qza \
+  --p-level 3 \
+  --o-collapsed-table location-table-2.qza
+
+qiime composition add-pseudocount \
+  --i-table table.qza \
+  --o-composition-table comp-location-table-2.qza
+
+qiime composition ancom \
+  --i-table comp-location-table-2.qza \
+  --m-metadata-file CarineMetadata.tsv \
+  --m-metadata-column location \
+  --o-visualization ancom-location.qzv
+
+
